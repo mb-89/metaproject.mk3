@@ -2,6 +2,8 @@ from .__plugin__ import Plugin as _P
 from .__plugin__ import publicFun
 from PySide2 import QtCore, QtWidgets
 import re
+from functools import partial
+import os.path as op
 
 class Plugin(_P):
     def __init__(self, app):
@@ -17,6 +19,9 @@ class Plugin(_P):
         self.widget.autocomplete()
 
     def start(self):self.widget.start()
+    def parse(self, cmd): 
+        if cmd:
+            self.widget.parse(cmd)
 
 class Widget(QtWidgets.QDockWidget):
     def __init__(self, app):
@@ -50,11 +55,23 @@ class Widget(QtWidgets.QDockWidget):
         self.txt.setCompleter(comp)
         self.comp = comp
 
-    def parse(self):
-        txt = self.txt.text()
-        self.txt.clear()
-        self.app.plugins["log"].logwidget.setVisible(True)
-        cmdmatches = re.findall(r"(.*)\((.*)\)",txt)
+    def parse(self, txt=None):
+        if txt is None:
+            txt = self.txt.text()
+            self.txt.clear()
+            self.app.plugins["log"].logwidget.setVisible(True)
+
+        if op.isfile(fp := op.abspath(txt)):
+            filecmds = open(fp,"r").readlines()
+            if filecmds:
+                self.app.log.info(f">>> executing {fp}")
+            for idx, cmd in enumerate(filecmds):
+                x = cmd.strip()
+                if not x:continue
+                QtCore.QTimer.singleShot(idx+1, partial(self.parse,x) )
+            return
+
+        cmdmatches = re.findall(r"(.*?)\((.*)\)",txt)
         if cmdmatches: cmdmatches = cmdmatches[0]
         self.app.log.info(f">>> {txt}")
         if len(cmdmatches)==1:
@@ -62,7 +79,7 @@ class Widget(QtWidgets.QDockWidget):
             args = []
         elif len(cmdmatches)>1:
             cmd = cmdmatches[0]
-            args = cmdmatches[1:]
+            args = cmdmatches[1]
         else:
             cmd = "?"
             args = [txt.replace("?","")]
@@ -81,17 +98,20 @@ class Widget(QtWidgets.QDockWidget):
                     self.app.log.info("="*30)
                 else:
                     #print general help
-                    self.app.log.info(f"Help:")
+                    self.app.log.info(f"{self.app.info['name']} help:")
+                    self.app.log.info(f"{self.app.info['description']}")
+                    self.app.log.info("="*30)
                     self.app.log.info(f"Ctrl+Space for autocomplete.")
                     self.app.log.info(f"enter <function name> for help on function (eg: 'log.toggle' shows help on log.toggle).")
                     self.app.log.info(f"enter <function name>(args) to call a function (eg: 'log.toggle()' toggles log.")
+                    self.app.log.info("="*30)
                     self.app.log.info(f"Functions available:")
                     for fn in sorted(self.app.publicfuns.keys()):
                         self.app.log.info(fn)
             else:
-                targetfun = self.app.publicfuns[cmd]
-                #do arg parsing later (TODO)
-                targetfun.action.trigger()
+                p = partial(self.app.publicfuns[cmd].trigger, args)
+                self.app.cmdbacklog.append(p)
+                self.app.execNextCmd()
         except KeyError:
             self.app.log.error(f"<<< invalid command")
         #self.app.log.info("")
